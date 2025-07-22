@@ -7,76 +7,103 @@ def extrair_fornecedor1(linha):
     if len(partes) < 8:
         return None
     try:
-        # Código = posição 1 (Referência)
         codigo = partes[1]
-
-        # Descrição = do idx 2 até antes do NCM (detectado pelo padrão de 8 dígitos)
         idx_ncm = next(i for i, v in enumerate(partes[2:], start=2) if re.match(r"^\d{8}$", v))
-        descricao = " ".join(partes[2:idx_ncm])
-
-        # Valor Unitário = campo após NCM + Qtde (logo após 2 posições)
-        valor_unit_str = partes[idx_ncm + 2]
-        valor = float(valor_unit_str.replace(".", "").replace(",", "."))
-
-        return [codigo, descricao.strip(), valor, "fornecedor1"]
+        raw = partes[2:idx_ncm]
+        descricao_tokens = []
+        temp = []
+        for tok in raw:
+            if len(tok) == 1:
+                temp.append(tok)
+            else:
+                if temp:
+                    descricao_tokens.append("".join(temp))
+                    temp = []
+                descricao_tokens.append(tok)
+        if temp:
+            descricao_tokens.append("".join(temp))
+        descricao = " ".join(descricao_tokens).strip()
+        valor_tok = next((t for t in partes[idx_ncm+1:] if re.match(r"^[\d\.]+,\d{2}$", t)), None)
+        if not valor_tok:
+            return None
+        valor = float(valor_tok.replace(".", "").replace(",", "."))
+        return [codigo, descricao, valor, "fornecedor1"]
     except Exception as e:
         print(f"⚠️ Erro ao processar linha (fornecedor1): {linha}\n→ {e}")
         return None
 
 def extrair_fornecedor2(linha):
-    partes = linha.strip().split()
-    if len(partes) < 8:
-        return None
     try:
-        # Código = sempre na posição 2
+        partes = linha.strip().split()
+        if len(partes) < 10:
+            return None
+
+        # Verifica se a linha começa com item numérico
+        if not re.match(r'^\d{2,3}[A-Z]*$', partes[0]):
+            return None
+
+        # Código está sempre na posição 2
         codigo = partes[2]
 
-        # Descrição = do idx 3 até antes do NCM (8 dígitos)
-        idx_ncm = next(i for i, v in enumerate(partes[3:], start=3) if re.fullmatch(r"\d{8}", v))
-        descricao = " ".join(partes[3:idx_ncm])
+        # Encontra índice do NCM (8 dígitos)
+        idx_ncm = next(i for i, p in enumerate(partes) if re.fullmatch(r'\d{8}', p))
+        
+        # Descrição é tudo entre código e NCM
+        descricao = ' '.join(partes[3:idx_ncm]).strip()
 
-        # Valor Unitário = campo após NCM (R$ Unit.), que é idx_ncm + 1
-        valor_unit_str = partes[idx_ncm + 1]
-        valor = float(valor_unit_str.replace(".", "").replace(",", "."))
+        # R$ Unit. está logo após o NCM
+        valor_bruto = partes[idx_ncm + 1]
+        valor = float(valor_bruto.replace('.', '').replace(',', '.'))
 
-        return [codigo, descricao.strip(), valor, "fornecedor2"]
+        return [codigo, descricao, valor, "fornecedor2"]
     except Exception as e:
         print(f"⚠️ Erro ao processar linha (fornecedor2): {linha}\n→ {e}")
         return None
 
+
+def extrair_fornecedor3(linha):
+    partes = linha.strip().split()
+    if len(partes) < 6 or not re.fullmatch(r"\d{3,}-\d", partes[1]): return None
+    try:
+        codigo = partes[1]
+        val_tok = partes[3]
+        valor = float(val_tok.replace('.', '').replace(',', '.'))
+        idx_ncm = next(i for i, v in enumerate(partes) if re.fullmatch(r"\d{8}", v))
+        start, end = idx_ncm+1, next((i for i, v in enumerate(partes[idx_ncm+1:], idx_ncm+1) if v.isdigit()), len(partes))
+        descricao = ' '.join(partes[start:end]).strip()
+        return [codigo, descricao, valor, "fornecedor3"]
+    except: return None
+
+def extrair_fornecedor4(linha):
+    partes = linha.strip().split()
+    if len(partes) < 10: return None
+    try:
+        codigo = partes[3]
+        idx_ncm = next(i for i, v in enumerate(partes) if re.fullmatch(r"\d{8}", v))
+        descricao = ' '.join(partes[4:idx_ncm]).strip()
+        valor_tok = next(t for t in partes[idx_ncm+1:] if re.match(r"^[\d\.]+,\d{2}$", t))
+        valor = float(valor_tok.replace('.', '').replace(',', '.'))
+        return [codigo, descricao, valor, "fornecedor4"]
+    except: return None
+
 def processar_pdf(caminho_pdf, fornecedor):
-    dados = []
+    dados=[]
     with pdfplumber.open(caminho_pdf) as pdf:
         for pagina in pdf.pages:
-            texto = pagina.extract_text()
-            if texto:
-                for linha in texto.split("\n"):
-                    if fornecedor == "fornecedor1":
-                        resultado = extrair_fornecedor1(linha)
-                    elif fornecedor == "fornecedor2":
-                        resultado = extrair_fornecedor2(linha)
-                    else:
-                        resultado = None
-
-                    if resultado:
-                        dados.append(resultado)
+            texto=pagina.extract_text() or ''
+            for linha in texto.split('\n'):
+                func = globals().get(f"extrair_{fornecedor}")
+                if not func: continue
+                res = func(linha)
+                if res: dados.append(res)
     return dados
 
-# Lista de arquivos e seus fornecedores
-fornecedores = [
-    ("fornecedor1.pdf", "fornecedor1"),
-    ("fornecedor2.pdf", "fornecedor2")
-]
-
-# Processar todos e consolidar
-todas_linhas = []
-for caminho, nome in fornecedores:
-    print(f"📄 Processando {caminho}...")
-    linhas = processar_pdf(caminho, nome)
-    print(f"✅ {len(linhas)} linhas extraídas de {nome}")
-    todas_linhas.extend(linhas)
-
-# Exportar Excel unificado
-df = pd.DataFrame(todas_linhas, columns=["Código", "Descrição", "Valor", "Fornecedor"])
-df.to_excel("orcamentos_unificados.xlsx", index=False)
-print("✅ Arquivo 'orcamentos_unificados.xlsx' criado com sucesso!")
+# Processar e exportar
+fornecedores=[('fornecedor1.pdf','fornecedor1'),('fornecedor2.pdf','fornecedor2'),('fornecedor3.pdf','fornecedor3'),('fornecedor4.pdf','fornecedor4')]
+all_data=[]
+for caminho, prov in fornecedores:
+    print(f'📄 Processando {caminho}...')
+    all_data.extend(processar_pdf(caminho, prov))
+df=pd.DataFrame(all_data,columns=['Código','Descrição','Valor','Fornecedor'])
+df.to_excel('orcamentos_unificados.xlsx',index=False)
+print('✅ Arquivo criado com sucesso!')

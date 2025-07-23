@@ -35,7 +35,7 @@ def extrair_fornecedor1(linha):
 def extrair_fornecedor2(linha):
     try:
         # Extrair todos os valores monetários com vírgula
-        valores = re.findall(r'\d{1,3}(?:\.\d{3})*,\d{2}', linha)
+        valores = re.findall(r'\d{1,9}(?:\.\d{3})*,\d{2}', linha)
         if len(valores) < 4:
             return None
 
